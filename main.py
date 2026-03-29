@@ -55,7 +55,7 @@ async def callback(code: str):
             return HTMLResponse(get_html_response("ERROR", "Faltan credenciales.", "#ff0000"))
         
         async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await hacer_peticion(client, 'https://discord.com/api/v10/oauth2/token', data={
+            r = await client.post('https://discord.com/api/v10/oauth2/token', data={
                 'client_id': CLIENT_ID,
                 'client_secret': CLIENT_SECRET,
                 'grant_type': 'authorization_code',
