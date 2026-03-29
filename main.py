@@ -1,5 +1,5 @@
 import os
-import requests
+import httpx
 import firebase_admin
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -9,12 +9,10 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI()
 
-# Configuración de variables
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
 
-# Intentar conectar con Firebase
 firebase_ok = False
 cred_path = "/etc/secrets/firebase_credentials.json" if os.path.exists("/etc/secrets/firebase_credentials.json") else "firebase_credentials.json"
 
@@ -53,42 +51,49 @@ def get_html_response(titulo, mensaje, color):
 @app.get("/callback")
 async def callback(code: str):
     try:
-        # Validar que las credenciales existan
         if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
-            return HTMLResponse(get_html_response("ERROR", "Faltan credenciales. Configura las variables de entorno.", "#ff0000"))
+            return HTMLResponse(get_html_response("ERROR", "Faltan credenciales.", "#ff0000"))
         
-        # 1. Obtener Token
-        r = requests.post('https://discord.com/api/v10/oauth2/token', data={
-            'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET,
-            'grant_type': 'authorization_code',
-            'code': code,
-            'redirect_uri': REDIRECT_URI
-        })
-        
-        # Debug: ver status y respuesta
-        print(f"Status Discord: {r.status_code}")
-        print(f"Response: {r.text[:200]}")
-        
-        if r.status_code != 200:
-            return HTMLResponse(get_html_response("ERROR", f"Discord respondio: {r.status_code}", "#ff0000"))
-        
-        try:
-            token_data = r.json()
-        except:
-            return HTMLResponse(get_html_response("ERROR", "Respuesta invalida de Discord", "#ff0000"))
-        
-        if "access_token" not in token_data:
-            return HTMLResponse(get_html_response("ERROR", "Token invalido o expirado", "#ffcc00"))
+        async with httpx.AsyncClient() as client:
+            r = await client.post('https://discord.com/api/v10/oauth2/token', data={
+                'client_id': CLIENT_ID,
+                'client_secret': CLIENT_SECRET,
+                'grant_type': 'authorization_code',
+                'code': code,
+                'redirect_uri': REDIRECT_URI
+            })
+            
+            print(f"Status Discord: {r.status_code}")
+            print(f"Response: {r.text[:500]}")
+            
+            if not r.text or r.status_code == 204:
+                return HTMLResponse(get_html_response("ERROR", "Discord no respondio.", "#ff0000"))
+            
+            if r.status_code != 200:
+                try:
+                    error_data = r.json()
+                    error_msg = error_data.get('error_description', error_data.get('error', 'Unknown'))
+                except:
+                    error_msg = r.text[:100]
+                return HTMLResponse(get_html_response("ERROR Discord", f"Code: {r.status_code} - {error_msg}", "#ff0000"))
+            
+            try:
+                token_data = r.json()
+            except Exception as json_err:
+                return HTMLResponse(get_html_response("ERROR", f"JSON invalido: {str(json_err)}", "#ff0000"))
+            
+            if "access_token" not in token_data:
+                return HTMLResponse(get_html_response("ERROR", "Token invalido.", "#ffcc00"))
 
-        token = token_data['access_token']
-        headers = {'Authorization': f'Bearer {token}'}
-        
-        # 2. Obtener datos del usuario
-        user_info = requests.get('https://discord.com/api/v10/users/@me', headers=headers).json()
-        guilds = requests.get('https://discord.com/api/v10/users/@me/guilds', headers=headers).json()
+            token = token_data['access_token']
+            headers = {'Authorization': f'Bearer {token}'}
+            
+            user_resp = await client.get('https://discord.com/api/v10/users/@me', headers=headers)
+            guilds_resp = await client.get('https://discord.com/api/v10/users/@me/guilds', headers=headers)
+            
+            user_info = user_resp.json()
+            guilds = guilds_resp.json()
 
-        # 3. Revisar Blacklist
         if firebase_ok:
             ref = db.reference('blacklist_servers')
             blacklist = ref.get() or {}
@@ -110,5 +115,6 @@ async def callback(code: str):
         return HTMLResponse(get_html_response("VERIFICADO", "Acceso concedido correctamente", "#00ffff"))
 
     except Exception as e:
-        # Esto nos dirá el error real en la pantalla
-        return HTMLResponse(get_html_response("FALLO TÉCNICO", f"Detalle: {str(e)}", "#ffaa00"))
+        import traceback
+        traceback.print_exc()
+        return HTMLResponse(get_html_response("FALLO TECNICO", f"Error: {type(e).__name__}", "#ffaa00"))
