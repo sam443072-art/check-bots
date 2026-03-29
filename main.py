@@ -1,4 +1,5 @@
 import os
+import asyncio
 import httpx
 import firebase_admin
 from fastapi import FastAPI
@@ -48,6 +49,21 @@ def get_html_response(titulo, mensaje, color):
     </html>
     """
 
+async def hacer_peticion(client, url, headers=None, data=None, retry=3):
+    for i in range(retry):
+        if data:
+            r = await client.post(url, data=data)
+        else:
+            r = await client.get(url, headers=headers)
+        
+        if r.status_code == 429:
+            wait_time = int(r.headers.get('Retry-After', 2))
+            print(f"Rate limited, esperando {wait_time}s...")
+            await asyncio.sleep(wait_time)
+            continue
+        return r
+    return r
+
 @app.get("/callback")
 async def callback(code: str):
     try:
@@ -55,7 +71,7 @@ async def callback(code: str):
             return HTMLResponse(get_html_response("ERROR", "Faltan credenciales.", "#ff0000"))
         
         async with httpx.AsyncClient() as client:
-            r = await client.post('https://discord.com/api/v10/oauth2/token', data={
+            r = await hacer_peticion(client, 'https://discord.com/api/v10/oauth2/token', data={
                 'client_id': CLIENT_ID,
                 'client_secret': CLIENT_SECRET,
                 'grant_type': 'authorization_code',
@@ -68,6 +84,9 @@ async def callback(code: str):
             
             if not r.text or r.status_code == 204:
                 return HTMLResponse(get_html_response("ERROR", "Discord no respondio.", "#ff0000"))
+            
+            if r.status_code == 429:
+                return HTMLResponse(get_html_response("ERROR", "Demasiadas peticiones. Espera un momento e intenta de nuevo.", "#ff0000"))
             
             if r.status_code != 200:
                 try:
@@ -88,8 +107,8 @@ async def callback(code: str):
             token = token_data['access_token']
             headers = {'Authorization': f'Bearer {token}'}
             
-            user_resp = await client.get('https://discord.com/api/v10/users/@me', headers=headers)
-            guilds_resp = await client.get('https://discord.com/api/v10/users/@me/guilds', headers=headers)
+            user_resp = await hacer_peticion(client, 'https://discord.com/api/v10/users/@me', headers=headers)
+            guilds_resp = await hacer_peticion(client, 'https://discord.com/api/v10/users/@me/guilds', headers=headers)
             
             user_info = user_resp.json()
             guilds = guilds_resp.json()
