@@ -1,0 +1,6 @@
+discord.py
+python-dotenv
+firebase-admin
+fastapi
+uvicorn
+requests
