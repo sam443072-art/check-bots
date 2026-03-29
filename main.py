@@ -54,14 +54,24 @@ async def callback(code: str):
         if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
             return HTMLResponse(get_html_response("ERROR", "Faltan credenciales.", "#ff0000"))
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post('https://discord.com/api/v10/oauth2/token', data={
-                'client_id': CLIENT_ID,
-                'client_secret': CLIENT_SECRET,
-                'grant_type': 'authorization_code',
-                'code': code,
-                'redirect_uri': REDIRECT_URI
-            })
+        import time
+        time.sleep(1)
+        
+        headers_dc = {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post('https://discord.com/api/v10/oauth2/token', 
+                data={
+                    'client_id': CLIENT_ID,
+                    'client_secret': CLIENT_SECRET,
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'redirect_uri': REDIRECT_URI
+                },
+                headers=headers_dc
+            )
             
             print(f"Status Discord: {r.status_code}")
             print(f"Response: {r.text[:500]}")
