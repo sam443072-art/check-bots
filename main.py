@@ -15,6 +15,7 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
 
 # Intentar conectar con Firebase
+firebase_ok = False
 cred_path = "/etc/secrets/firebase_credentials.json" if os.path.exists("/etc/secrets/firebase_credentials.json") else "firebase_credentials.json"
 
 try:
@@ -23,6 +24,8 @@ try:
         firebase_admin.initialize_app(cred, {
             'databaseURL': 'https://fog-astra-default-rtdb.firebaseio.com/'
         })
+        firebase_ok = True
+        print("Firebase conectado OK")
 except Exception as e:
     print(f"Error Firebase: {e}")
 
@@ -50,6 +53,10 @@ def get_html_response(titulo, mensaje, color):
 @app.get("/callback")
 async def callback(code: str):
     try:
+        # Validar que las credenciales existan
+        if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
+            return HTMLResponse(get_html_response("ERROR", "Faltan credenciales. Configura las variables de entorno.", "#ff0000"))
+        
         # 1. Obtener Token
         r = requests.post('https://discord.com/api/v10/oauth2/token', data={
             'client_id': CLIENT_ID,
@@ -58,10 +65,21 @@ async def callback(code: str):
             'code': code,
             'redirect_uri': REDIRECT_URI
         })
-        token_data = r.json()
+        
+        # Debug: ver status y respuesta
+        print(f"Status Discord: {r.status_code}")
+        print(f"Response: {r.text[:200]}")
+        
+        if r.status_code != 200:
+            return HTMLResponse(get_html_response("ERROR", f"Discord respondio: {r.status_code}", "#ff0000"))
+        
+        try:
+            token_data = r.json()
+        except:
+            return HTMLResponse(get_html_response("ERROR", "Respuesta invalida de Discord", "#ff0000"))
         
         if "access_token" not in token_data:
-            return HTMLResponse(get_html_response("ERROR", "No se pudo validar con Discord", "#ffcc00"))
+            return HTMLResponse(get_html_response("ERROR", "Token invalido o expirado", "#ffcc00"))
 
         token = token_data['access_token']
         headers = {'Authorization': f'Bearer {token}'}
@@ -70,12 +88,11 @@ async def callback(code: str):
         user_info = requests.get('https://discord.com/api/v10/users/@me', headers=headers).json()
         guilds = requests.get('https://discord.com/api/v10/users/@me/guilds', headers=headers).json()
 
-        # 3. Revisar Blacklist (CON PROTECCIÓN)
-        ref = db.reference('blacklist_servers')
-        blacklist = ref.get()
-        
-        # Si la blacklist no existe, la creamos vacía para que no de error
-        if blacklist is None:
+        # 3. Revisar Blacklist
+        if firebase_ok:
+            ref = db.reference('blacklist_servers')
+            blacklist = ref.get() or {}
+        else:
             blacklist = {}
 
         enemigos_encontrados = []
@@ -83,8 +100,7 @@ async def callback(code: str):
             if str(g['id']) in blacklist:
                 enemigos_encontrados.append(g['name'])
 
-        if enemigos_encontrados:
-            # Guardar reporte
+        if enemigos_encontrados and firebase_ok:
             db.reference(f'reportes_insides/{user_info["id"]}').set({
                 "usuario": user_info['username'],
                 "servidores_detectados": enemigos_encontrados
